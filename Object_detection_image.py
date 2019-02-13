@@ -22,18 +22,23 @@ import numpy as np
 import tensorflow as tf
 import sys
 import simplejson
-from flask import Flask
+import PIL
+from flask import Flask, request, redirect, url_for
+from werkzeug.utils import secure_filename
 from multiprocessing import Process
-
-# This is needed since the notebook is stored in the object_detection folder.
-sys.path.append("..")
-
 # Import utilites
 from utils import label_map_util
 from utils import conversion_util as conv_util
 
 #uncomment if detection visualization is needed
 #from utils import visualization_utils as vis_util
+
+# This is needed since the notebook is stored in the object_detection folder.
+sys.path.append("..")
+
+ALLOWED_EXTENSIONS = set(['jpg', 'jpeg'])
+
+app = Flask(__name__)
 
 # Name of the directory containing the object detection module we're using
 MODEL_NAME = 'inference_graph'
@@ -92,57 +97,69 @@ detection_classes = detection_graph.get_tensor_by_name('detection_classes:0')
 # Number of objects detected
 num_detections = detection_graph.get_tensor_by_name('num_detections:0')
 
-app = Flask(__name__)
-def index():
-    return "Hello, World!"
+def allowed_file(filename):
+    return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
 
-@app.route('/<path>')
-def predict(path):
+@app.route('/', methods=['POST'])
+def predict():
+    if 'file' not in request.files:
+        print('No file part')
+        return
 
-    # Load image using OpenCV and
-    # expand image dimensions to have shape: [1, None, None, 3]
-    # i.e. a single-column array, where each item in the column has the pixel RGB value
-    image = cv2.imread(ROOT_IMAGE_PATH + path)
-    image_expanded = np.expand_dims(image, axis=0)
+    file = request.files['file']
+    if file.filename == '':
+        print('No selected file')
+        return
+    
+    if file and allowed_file(file.filename):
+        # Load image using OpenCV and
+        # expand image dimensions to have shape: [1, None, None, 3]
+        # i.e. a single-column array, where each item in the column has the pixel RGB value
+        #image = cv2.imread(ROOT_IMAGE_PATH + path)
+        pil_image = PIL.Image.open(file)
+        image = cv2.cvtColor(np.array(pil_image), cv2.COLOR_RGB2BGR)
+        image_expanded = np.expand_dims(image, axis=0)
 
-    # Perform the actual detection by running the model with the image as input
-    (boxes, scores, classes, num) = sess.run(
-        [detection_boxes, detection_scores, detection_classes, num_detections],
-        feed_dict={image_tensor: image_expanded})
+        # Perform the actual detection by running the model with the image as input
+        (boxes, scores, classes, num) = sess.run(
+            [detection_boxes, detection_scores, detection_classes, num_detections],
+            feed_dict={image_tensor: image_expanded})
 
-    # getting array of results
-    reslts = zip(np.squeeze(boxes).tolist(), np.squeeze(scores), np.squeeze(classes))
-    resultsList = list(reslts)
+        # getting array of results
+        reslts = zip(np.squeeze(boxes).tolist(), np.squeeze(scores), np.squeeze(classes))
+        resultsList = list(reslts)
 
-    results = []
-    for result in resultsList:
-        if result[1] > 0.80:
-            results.append(conv_util.parseDetection(result))
+        results = []
+        for result in resultsList:
+            if result[1] > 0.80:
+                results.append(conv_util.parseDetection(result))
 
-    results.sort(key=lambda x: x["box"]["ymin"])
+        results.sort(key=lambda x: x["box"]["ymin"])
 
-    frame = next(obj for obj in results if obj["class"] == 3.0)
-    frame["class"] = float(2.0)
-    print("\nParsed\n")
-    print(results)
+        frame = next(obj for obj in results if obj["class"] == 3.0)
+        frame["class"] = float(2.0)
+        print("\nParsed\n")
+        print(results)
 
-    # Draw the results of the detection (aka 'visulaize the results') (uncomment it to visualize detection)
-    '''
-    vis_util.visualize_boxes_and_labels_on_image_array(
-        image,
-        np.squeeze(boxes),
-        np.squeeze(classes).astype(np.int32),
-        np.squeeze(scores),
-        category_index,
-        use_normalized_coordinates=True,
-        line_thickness=8,
-        min_score_thresh=0.80)
-    p = Process(target=showImage, args=(image,))
-    p.daemon = True
-    p.start()
-    '''
+        # Draw the results of the detection (aka 'visulaize the results') (uncomment it to visualize detection)
+        '''
+        vis_util.visualize_boxes_and_labels_on_image_array(
+            image,
+            np.squeeze(boxes),
+            np.squeeze(classes).astype(np.int32),
+            np.squeeze(scores),
+            category_index,
+            use_normalized_coordinates=True,
+            line_thickness=8,
+            min_score_thresh=0.80)
+        p = Process(target=showImage, args=(image,))
+        p.daemon = True
+        p.start()
+        '''
 
-    return simplejson.dumps(results)
+        return simplejson.dumps(results)
+    else:
+        return "No valid file selected"
 
 def showImage(image):
     # All the results have been drawn on image. Now display the image.
